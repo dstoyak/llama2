@@ -46,6 +46,7 @@ impl Config {
             hidden_dim: read::<i32>(f),
             n_layers: read::<i32>(f),
             n_heads: read::<i32>(f),
+            //Number of key and value heads.
             n_kv_heads: read::<i32>(f),
             vocab_size: read::<i32>(f),
             seq_len: read::<i32>(f),
@@ -66,9 +67,13 @@ struct TransformerWeights {
     rms_att_weight: Vec<f32>, // (layer, dim) rmsnorm weights
     rms_ffn_weight: Vec<f32>, // (layer, dim)
     // weights for matmuls
+    //Linear transformation for queries.
     wq: Vec<f32>, // (layer, dim, dim)
+    //Linear transformation for keys.
     wk: Vec<f32>, // (layer, dim, dim)
+    //Linear transformation for values.
     wv: Vec<f32>, // (layer, dim, dim)
+    //Linear transformation for output.
     wo: Vec<f32>, // (layer, dim, dim)
     // weights for ffn
     w1: Vec<f32>, // (layer, hidden_dim, dim)
@@ -183,4 +188,30 @@ fn rmsnorm(o: &mut Vec<f32>, x: &Vec<f32>, weight: &[f32]) {
 }
 
 #[cfg(not(feature = "threads"))]
-fn matmul() {}
+fn matmul(o: &mut Vec<f32>, x: &Vec<f32>, w: &[f32], n: usize, d: usize) {
+    // for i in 0..d {
+    //     let mut val: f32 = 0.0;
+    //     for j in 0..n {
+    //         val += w[i * n + j] * x[j];
+    //     }
+    //     o[i] = val;
+    // }
+    o.iter_mut().enumerate().for_each(|(i, oi)| {
+        let mut val: f32 = 0.0;
+        for j in 0..n {
+            val += w[i * n + j] * x[j];
+        }
+        *oi = val;
+    });
+}
+
+#[cfg(feature = "threads")]
+fn matmul(o: &mut Vec<f32>, x: &Vec<f32>, w: &[f32], n: usize, d: usize) {
+    o.par_iter_mut().enumerate().for_each(|(i, oi)| {
+        let mut val: f32 = 0.0;
+        for j in 0..n {
+            val += w[i * n + j] * x[j];
+        }
+        *oi = val;
+    });
+}
