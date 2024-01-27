@@ -1,5 +1,6 @@
 use ndarray::prelude::*;
 use ndarray::RemoveAxis;
+use std::{env, f32};
 // use std::{env, f32};
 // use std::error::Error;
 use std::fs::File;
@@ -157,3 +158,29 @@ impl RunState {
         }
     }
 }
+
+#[cfg(not(feature = "threads"))]
+fn rmsnorm(o: &mut Vec<f32>, x: &Vec<f32>, weight: &[f32]) {
+    let mss: f32 = x.iter().map(|&y| y * y).sum::<f32>() / (x.len() as f32);
+    let rsqrt: f32 = 1.0 / (mss.sqrt() + 1e-5f32);
+    // for ((oi, xi), wi) in o.iter_mut().zip(&x[..]).zip(weight) {
+    //     *oi = *xi * rsqrt * *wi;
+    // }
+    o.iter_mut()
+        .zip(&x[..])
+        .zip(weight)
+        .for_each(|((oi, xi), wi)| *oi = *xi * rsqrt * *wi);
+}
+
+#[cfg(feature = "threads")]
+fn rmsnorm(o: &mut Vec<f32>, x: &Vec<f32>, weight: &[f32]) {
+    let mss = x.par_iter().map(|&y| y * y).sum::<f32>() / (x.len() as f32);
+    let rsqrt = 1.0 / (mss.sqrt() + 1e-5f32);
+    o.iter_mut()
+        .zip(&x[..])
+        .zip(weight)
+        .for_each(|((oi, xi), wi)| *oi = *xi * rsqrt * *wi);
+}
+
+#[cfg(not(feature = "threads"))]
+fn matmul() {}
