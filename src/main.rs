@@ -215,3 +215,19 @@ fn matmul(o: &mut Vec<f32>, x: &Vec<f32>, w: &[f32], n: usize, d: usize) {
         *oi = val;
     });
 }
+
+#[cfg(not(feature = "threads"))]
+fn softmax(x: &Vec<f32>) {
+    let max: f32 = x.iter().fold(x[0], |acc, &x| acc.max(x));
+    x.iter_mut().for_each(|a| *a = (*a - max).exp());
+    let sum: f32 = x.iter().sum();
+    x.iter_mut().for_each(|a| *a /= sum);
+}
+
+#[cfg(feature = "threads")]
+fn softmax(x: &Vec<f32>) {
+    let max: f32 = x.iter().fold(x[0], |acc, &x| acc.max(x));
+    x.par_iter_mut().for_each(|a| *a = (*a - max).exp());
+    let sum: f32 = x.iter().sum();
+    x.par_iter_mut().for_each(|a| *a /= sum);
+}
