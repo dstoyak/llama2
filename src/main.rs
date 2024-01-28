@@ -39,6 +39,19 @@ fn read_vec<T: FromBytes>(rdr: &mut BufReader<File>, size: i32) -> Vec<T> {
     (0..size).map(|_| read::<T>(rdr)).collect()
 }
 
+#[derive(Debug)]
+struct Config {
+    dim: i32,
+    hidden_dim: i32,
+    n_layers: i32,
+    n_heads: i32,
+    #[allow(dead_code)]
+    n_kv_heads: i32,
+    vocab_size: i32,
+    seq_len: i32,
+    shared_weight: bool,
+}
+
 impl Config {
     fn from_buf_reader(f: &mut BufReader<File>) -> Self {
         let c = Self {
@@ -82,8 +95,8 @@ struct TransformerWeights {
     // final rmsnorm
     rms_final_weight: Vec<f32>, // (dim,)
     // freq_cis for RoPE relatively positional embeddings
-    freq_cis_real: Vec<f32>, // (seq_len, dim/2)
-    freq_cis_imag: Vec<f32>, // (seq_len, dim/2)
+    rope_real: Vec<f32>, // (seq_len, dim/2)
+    rope_imag: Vec<f32>, // (seq_len, dim/2)
     // optional output embedding
     wcls: Option<Vec<f32>>, // (vocab_size, dim)
 }
@@ -102,8 +115,8 @@ impl TransformerWeights {
         let w3 = read_vec::<f32>(f, c.n_layers * c.dim * c.hidden_dim);
         let rms_final_weight = read_vec::<f32>(f, c.dim);
         let head_size = c.dim / c.n_heads;
-        let freq_cis_real = read_vec::<f32>(f, c.seq_len * head_size / 2);
-        let freq_cis_imag = read_vec::<f32>(f, c.seq_len * head_size / 2);
+        let rope_real = read_vec::<f32>(f, c.seq_len * head_size / 2);
+        let rope_imag = read_vec::<f32>(f, c.seq_len * head_size / 2);
         let wcls = match c.shared_weight {
             true => None,
             false => Some(read_vec::<f32>(f, c.vocab_size * c.dim)),
@@ -121,8 +134,8 @@ impl TransformerWeights {
             w2,
             w3,
             rms_final_weight,
-            freq_cis_real,
-            freq_cis_imag,
+            rope_real,
+            rope_imag,
             wcls,
         }
     }
@@ -148,6 +161,7 @@ struct RunState {
 impl RunState {
     fn new(c: &Config) -> Self {
         Self {
+            // activation at current time stamp (dim,)
             x: vec![0.0; c.dim as usize],
             xb: vec![0.0; c.dim as usize],
             xb2: vec![0.0; c.dim as usize],
@@ -217,7 +231,7 @@ fn matmul(o: &mut Vec<f32>, x: &Vec<f32>, w: &[f32], n: usize, d: usize) {
 }
 
 #[cfg(not(feature = "threads"))]
-fn softmax(x: &Vec<f32>) {
+fn softmax(x: &mut [f32]) {
     let max: f32 = x.iter().fold(x[0], |acc, &x| acc.max(x));
     x.iter_mut().for_each(|a| *a = (*a - max).exp());
     let sum: f32 = x.iter().sum();
@@ -225,9 +239,44 @@ fn softmax(x: &Vec<f32>) {
 }
 
 #[cfg(feature = "threads")]
-fn softmax(x: &Vec<f32>) {
+fn softmax(x: &mut [f32]) {
     let max: f32 = x.iter().fold(x[0], |acc, &x| acc.max(x));
     x.par_iter_mut().for_each(|a| *a = (*a - max).exp());
     let sum: f32 = x.iter().sum();
     x.par_iter_mut().for_each(|a| *a /= sum);
 }
+
+fn transformer(p: &Config, w: &TransformerWeights, s: &mut RunState, token: i32, pos: usize) {
+    let token: usize = token as usize;
+    // activation at current time stamp (dim,)
+    // let x = s.x;
+    let dim: usize = p.dim as usize;
+    let kv_dim: i32 = (p.dim * p.n_kv_heads) / p.n_heads;
+    let kv_mul: i32 = p.n_heads / p.n_kv_heads;
+    let hidden_dim: usize = p.hidden_dim as usize;
+    let head_size: usize = dim / p.n_heads as usize;
+
+    // copy token embeddings into x//s.x is activations at current time (dim, )
+    let content_row: &[f32] = &w.token_embedding_table[token * dim..(token + 1) * dim];
+    s.x.copy_from_slice(content_row);
+
+    //positional embeddings
+    //first gonna do it based on the method used in rust implementation where frrequencies are given.
+    //then need to change it to calculate frequencies from head_dim and head_size.
+    let rope_real = &w.rope_real[pos * (head_size / 2)..(pos + 1) * (head_size / 2)];
+    let rope_imag = &w.rope_imag[pos * (head_size / 2)..(pos + 1) * (head_size / 2)];
+
+    //loop over each layer
+    for layer in 0..(p.n_layers as usize) {
+        // pre-attention normilization
+        // ....
+
+        // q, k, v projections
+        // ...
+
+        //rotary positional embeddings
+        // ...
+    }
+}
+
+fn main() {}
