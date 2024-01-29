@@ -269,7 +269,11 @@ fn transformer(p: &Config, w: &TransformerWeights, s: &mut RunState, token: i32,
     //loop over each layer
     for layer in 0..(p.n_layers as usize) {
         // pre-attention normilization
-        rmsnorm(&mut s.xb, &s.x, &w.rms_att_weight[l * dim..(l + 1) * dim]);
+        rmsnorm(
+            &mut s.xb,
+            &s.x,
+            &w.rms_att_weight[layer * dim..(layer + 1) * dim],
+        );
 
         // q, k, v projections
         // w.wq, w.wk, w.wv are bias vectors
