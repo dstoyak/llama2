@@ -300,7 +300,10 @@ fn transformer(p: &Config, w: &TransformerWeights, s: &mut RunState, token: i32,
         );
 
         //rotary positional embeddings
-        // ...
+        for head in 0..n_heads {
+            let q = &mut s.q[head*head_size..(head+1)*head_size];
+            let k = &mut s.k[head*head_size..(head+1)*head_size];
+        }
     }
 }
 
