@@ -303,6 +303,16 @@ fn transformer(p: &Config, w: &TransformerWeights, s: &mut RunState, token: i32,
         for head in 0..n_heads {
             let q = &mut s.q[head*head_size..(head+1)*head_size];
             let k = &mut s.k[head*head_size..(head+1)*head_size];
+
+            for 0..head_size/2 {
+                //fcr is frequency real
+                let fcr = rope_real[i]
+                //fci is frequncy imaginary
+                let fci = rope_imag[i]
+
+                (q[i*2], q[i*2 +1]) = (q[i*2]*fcr - q[i*2+1]*fci, q[i*2]*fci + q[i*2+1]*fcr);
+                (k[i*2], k[i*2 +1]) = (k[i*2]*fcr - k[i*2+1]*fci, k[i*2]*fci + k[i*2+1]*fcr);
+            }
         }
     }
 }
