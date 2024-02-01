@@ -327,20 +327,32 @@ fn transformer(p: &Config, w: &TransformerWeights, s: &mut RunState, token: i32,
         //multihead attention
         //add multiquery support in run.c. we can now train and infence multiquery models (where n_kv_heads < n_heads). this also means that we, in principle, support Llama 2 34B and 70B models, which are multiquery
         //add karpathy commit #284
-        for h 0..n_heads {
+        #[cfg(not(feature = "threads"))]
+        for h (0..n_heads) {
             let q = &s.q[h*head_sizes..(h+1)*head_size];
             let mut att = &mut s.att[h*seq_len..(h+1)*seq_len];
 
-            for p in 0..pos+1 {
+            for p in (0..=pos) {
                 let koff = loff + p*dim+h*head_size;
                 let k = &s.key_cache[koff..(koff+head)];
 
                 // calculating attention score
-                att[p] = q.iter().zip(k.iter()).map(|(&a, &b)| a*b).sum::<f32> / h(ead_size as f32).sqrt();
+                att[p] = q.iter().zip(k.iter()).map(|(&a, &b)| a*b).sum::<f32> / (head_size as f32).sqrt();
+            }
+            softmax(& mut att);
+
+            //storing weighted sum of keys in buffer
+            let xb = &mut s.xb[h.head_size..(h+1)*head_size];
+            xb.fill(0.0);
+            for p in (0..=pos) {
+                let koff = loff + p*dim+h*head_size;
+                let value_cache = &s.value_cache[koff..(koff+head_size)];
+                let a = att[p];
+                xb.iter_mut().zip(value_cache).for_each(|xbi, &vi| *xbi + a * vi);
             }
         }
-
-
+        #[cfg(feature="threads")]
+        
     }
 }
 
