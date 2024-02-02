@@ -167,8 +167,11 @@ impl RunState {
             xb2: vec![0.0; c.dim as usize],
             hb: vec![0.0; c.hidden_dim as usize],
             hb2: vec![0.0; c.hidden_dim as usize],
+            //query
             q: vec![0.0; c.dim as usize],
+            //key
             k: vec![0.0; c.dim as usize],
+            //value
             v: vec![0.0; c.dim as usize],
             att: vec![0.0; (c.n_heads * c.seq_len) as usize],
             logits: vec![0.0; c.vocab_size as usize],
@@ -300,7 +303,56 @@ fn transformer(p: &Config, w: &TransformerWeights, s: &mut RunState, token: i32,
         );
 
         //rotary positional embeddings
-        // ...
+        for head in 0..n_heads {
+            let q = &mut s.q[head*head_size..(head+1)*head_size];
+            let k = &mut s.k[head*head_size..(head+1)*head_size];
+
+            for i in 0..head_size/2 {
+                //fcr is frequency real
+                let fcr = rope_real[i]
+                //fci is frequncy imaginary
+                let fci = rope_imag[i]
+
+                (q[i*2], q[i*2 +1]) = (q[i*2]*fcr - q[i*2+1]*fci, q[i*2]*fci + q[i*2+1]*fcr);
+                (k[i*2], k[i*2 +1]) = (k[i*2]*fcr - k[i*2+1]*fci, k[i*2]*fci + k[i*2+1]*fcr);
+            }
+        }
+
+        // cache k and v values ater applying layer offset. Layer offset allows for better training and crosspollination of information between layer. Improves contetual understanding
+        // honestly read some more about this
+        let loff = layer *seq_len*dim;
+        s.key_cache[(loff+pos*dim)..(loff+(pos+1)*dim)].copy_from_slice(&s.k)
+        s.value_cache[(loff+pos*dim)..(loff+(pos+1)*dim)].copy_from_slice(&s.v)
+
+        //multihead attention
+        //add multiquery support in run.c. we can now train and infence multiquery models (where n_kv_heads < n_heads). this also means that we, in principle, support Llama 2 34B and 70B models, which are multiquery
+        //add karpathy commit #284
+        #[cfg(not(feature = "threads"))]
+        for h (0..n_heads) {
+            let q = &s.q[h*head_sizes..(h+1)*head_size];
+            let mut att = &mut s.att[h*seq_len..(h+1)*seq_len];
+
+            for p in (0..=pos) {
+                let koff = loff + p*dim+h*head_size;
+                let k = &s.key_cache[koff..(koff+head)];
+
+                // calculating attention score
+                att[p] = q.iter().zip(k.iter()).map(|(&a, &b)| a*b).sum::<f32> / (head_size as f32).sqrt();
+            }
+            softmax(& mut att);
+
+            //storing weighted sum of keys in buffer
+            let xb = &mut s.xb[h.head_size..(h+1)*head_size];
+            xb.fill(0.0);
+            for p in (0..=pos) {
+                let koff = loff + p*dim+h*head_size;
+                let value_cache = &s.value_cache[koff..(koff+head_size)];
+                let a = att[p];
+                xb.iter_mut().zip(value_cache).for_each(|xbi, &vi| *xbi + a * vi);
+            }
+        }
+        #[cfg(feature="threads")]
+        
     }
 }
 
