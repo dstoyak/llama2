@@ -276,7 +276,7 @@ fn transformer(p: &Config, w: &TransformerWeights, s: &mut RunState, token: i32,
         );
 
         // q, k, v projections
-        // w.wq, w.wk, w.wv are bias vectors
+        // w.wq, w.wk, w.wv are weight vectors computed during training
         matmul(
             &mut s.q,
             &s.xb,
