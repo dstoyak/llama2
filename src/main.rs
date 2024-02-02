@@ -257,7 +257,9 @@ fn transformer(p: &Config, w: &TransformerWeights, s: &mut RunState, token: i32,
     let kv_dim: i32 = (p.dim * p.n_kv_heads) / p.n_heads;
     let kv_mul: i32 = p.n_heads / p.n_kv_heads;
     let hidden_dim: usize = p.hidden_dim as usize;
-    let head_size: usize = dim / p.n_heads as usize;
+    let n_heads: usize = p.n_heads as usize;
+    let head_size: usize = dim / n_heads;
+    let seq_len: usize = p.seq_len as usize;
 
     // copy token embeddings into x//s.x is activations at current time (dim, )
     let content_row: &[f32] = &w.token_embedding_table[token * dim..(token + 1) * dim];
@@ -266,8 +268,8 @@ fn transformer(p: &Config, w: &TransformerWeights, s: &mut RunState, token: i32,
     //positional embeddings
     //first gonna do it based on the method used in rust implementation where frrequencies are given.
     //then need to change it to calculate frequencies from head_dim and head_size.
-    let rope_real = &w.rope_real[pos * (head_size / 2)..(pos + 1) * (head_size / 2)];
-    let rope_imag = &w.rope_imag[pos * (head_size / 2)..(pos + 1) * (head_size / 2)];
+    let rope_real: &[f32] = &w.rope_real[pos * (head_size / 2)..(pos + 1) * (head_size / 2)];
+    let rope_imag: &[f32] = &w.rope_imag[pos * (head_size / 2)..(pos + 1) * (head_size / 2)];
 
     //loop over each layer
     for layer in 0..(p.n_layers as usize) {
@@ -309,9 +311,9 @@ fn transformer(p: &Config, w: &TransformerWeights, s: &mut RunState, token: i32,
 
             for i in 0..head_size/2 {
                 //fcr is frequency real
-                let fcr = rope_real[i]
+                let fcr = rope_real[i];
                 //fci is frequncy imaginary
-                let fci = rope_imag[i]
+                let fci = rope_imag[i];
 
                 (q[i*2], q[i*2 +1]) = (q[i*2]*fcr - q[i*2+1]*fci, q[i*2]*fci + q[i*2+1]*fcr);
                 (k[i*2], k[i*2 +1]) = (k[i*2]*fcr - k[i*2+1]*fci, k[i*2]*fci + k[i*2+1]*fcr);
@@ -328,13 +330,13 @@ fn transformer(p: &Config, w: &TransformerWeights, s: &mut RunState, token: i32,
         //add multiquery support in run.c. we can now train and infence multiquery models (where n_kv_heads < n_heads). this also means that we, in principle, support Llama 2 34B and 70B models, which are multiquery
         //add karpathy commit #284
         #[cfg(not(feature = "threads"))]
-        for h (0..n_heads) {
-            let q = &s.q[h*head_sizes..(h+1)*head_size];
+        for h in 0..n_heads {
+            let q = &s.q[h*head_size..(h+1)*head_size];
             let mut att = &mut s.att[h*seq_len..(h+1)*seq_len];
 
-            for p in (0..=pos) {
+            for p in 0..=pos {
                 let koff = loff + p*dim+h*head_size;
-                let k = &s.key_cache[koff..(koff+head)];
+                let k = &s.key_cache[koff..(koff+h)];
 
                 // calculating attention score
                 att[p] = q.iter().zip(k.iter()).map(|(&a, &b)| a*b).sum::<f32> / (head_size as f32).sqrt();
@@ -342,13 +344,13 @@ fn transformer(p: &Config, w: &TransformerWeights, s: &mut RunState, token: i32,
             softmax(& mut att);
 
             //storing weighted sum of keys in buffer
-            let xb = &mut s.xb[h.head_size..(h+1)*head_size];
+            let xb = &mut s.xb[h*head_size..(h+1)*head_size];
             xb.fill(0.0);
-            for p in (0..=pos) {
+            for p in 0..=pos {
                 let koff = loff + p*dim+h*head_size;
                 let value_cache = &s.value_cache[koff..(koff+head_size)];
                 let a = att[p];
-                xb.iter_mut().zip(value_cache).for_each(|xbi, &vi| *xbi + a * vi);
+                xb.iter_mut().zip(value_cache).for_each(|(xbi, &vi)| *xbi = a * vi);
             }
         }
         #[cfg(feature="threads")]
