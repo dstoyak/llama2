@@ -390,7 +390,82 @@ fn transformer(p: &Config, w: &TransformerWeights, s: &mut RunState, token: i32,
                     }
                 })
         }
+
+        // output projection
+        matmul(
+            &mut s.xb2,
+            &s.xb,
+            &w.wo[layer * dim * dim..(layer + 1) * dim * dim],
+            dim,
+            dim,
+        );
+
+        // add xb2 back to x. ths is the "residual connection"
+        s.x.iter_mut().zip(s.xb2.iter()).for_each(|(a, b)| *a += *b);
+
+        // rms norm before feed forward network
+        rmsnorm(
+            &mut s.xb,
+            &s.x,
+            &w.rms_ffn_weight[layer * dim..(layer + 1) * dim],
+        );
+        // feed forward nettwork block
+        matmul(
+            &mut s.hb,
+            &s.xb,
+            &w.w1[layer * hidden_dim * dim..(layer + 1) * hidden_dim * dim],
+            dim,
+            hidden_dim,
+        );
+        matmul(
+            &mut s.hb2,
+            &s.xb,
+            &w.w3[layer * hidden_dim * dim..(layer + 1) * hidden_dim * dim],
+            dim,
+            hidden_dim,
+        );
+
+        //activations
+        //silu(x)=x*σ(x),where σ(x) is the logistic sigmoid
+        #[cfg(not(feature = "threads"))]
+        {
+            s.hb.iter_mut()
+                .for_each(|a| *a = *a * (1.0 / (1.0 + (-*a).exp())));
+        }
+        #[cfg(feature = "threads")]
+        {
+            s.hb.par_iter_mut()
+                .for_each(|a| *a = *a * (1.0 / (1.0 + (-*a).exp())));
+        }
+        //multiply with hb2=w3(x) into hb
+        // whats the purpose of this?
+        s.hb.iter_mut()
+            .zip(s.hb2.iter())
+            .for_each(|(a, &b)| *a *= b);
+
+        // this is just adding weighting? I think?
+        // READ MORE REGARDING PURPOSE!
+        matmul(
+            &mut s.xb,
+            &s.hb,
+            &w.w2[layer * dim * hidden_dim..(layer + 1) * dim * hidden_dim],
+            hidden_dim,
+            dim,
+        );
+
+        // add xb back into x
+        s.x.iter_mut().zip(s.xb.iter()).for_each(|(a, &b)| *a += b);
     }
+
+    // final normilization
+    s.xb.copy_from_slice(&s.x);
+    rmsnorm(&mut s.x, &s.xb, &w.rms_final_weight);
+
+    // logits
+    let wcls = match &w.wcls {
+        Some(wcls) => wcls,
+        None => &w.token_embedding_table,
+    };
 }
 
 fn main() {}
