@@ -1,6 +1,6 @@
-use ndarray::parallel::prelude::IntoParallelRefMutIterator;
-use ndarray::prelude::*;
-use ndarray::RemoveAxis;
+// use ndarray::parallel::prelude::IntoParallelRefMutIterator;
+// use ndarray::prelude::*;
+// use ndarray::RemoveAxis;
 use std::error::Error;
 use std::io::stdout;
 use std::io::Write;
@@ -210,7 +210,7 @@ fn rmsnorm(o: &mut Vec<f32>, x: &Vec<f32>, weight: &[f32]) {
 }
 
 #[cfg(not(feature = "threads"))]
-fn matmul(o: &mut Vec<f32>, x: &Vec<f32>, w: &[f32], n: usize, d: usize) {
+fn matmul(o: &mut Vec<f32>, x: &Vec<f32>, w: &[f32], n: usize, _d: usize) {
     // for i in 0..d {
     //     let mut val: f32 = 0.0;
     //     for j in 0..n {
@@ -259,8 +259,8 @@ fn transformer(p: &Config, w: &TransformerWeights, s: &mut RunState, token: i32,
     // activation at current time stamp (dim,)
     // let x = s.x;
     let dim: usize = p.dim as usize;
-    let kv_dim: i32 = (p.dim * p.n_kv_heads) / p.n_heads;
-    let kv_mul: i32 = p.n_heads / p.n_kv_heads;
+    let _kv_dim: i32 = (p.dim * p.n_kv_heads) / p.n_heads;
+    let _kv_mul: i32 = p.n_heads / p.n_kv_heads;
     let hidden_dim: usize = p.hidden_dim as usize;
     let n_heads: usize = p.n_heads as usize;
     let head_size: usize = dim / n_heads;
@@ -479,7 +479,8 @@ type Score = f32;
 
 //tokenizer read
 fn read_tokenizer(vocab_size: usize) -> (Vec<(String, Score)>, u32) {
-    let mut rdr = BufReader::new(File::open("tokenizer.bin").expect("Couldn't load tokenizer.bin"));
+    let mut rdr =
+        BufReader::new(File::open("stories15M.bin").expect("Couldn't load tokenizer.bin"));
     let max_token_length: u32 = read::<u32>(&mut rdr);
 
     let mut vocab: Vec<(String, Score)> = Vec::with_capacity(vocab_size);
@@ -564,7 +565,7 @@ fn bpe_encode(text: &[u8], vocab: &Vec<(String, Score)>, max_token_length: usize
         // structured as (score, (vocab index, tokens index))
         let mut best = (-1e10_f32, (usize::MAX, usize::MAX));
 
-        for i in 0..=tokens.len() {
+        for i in 0..tokens.len() - 1 {
             buffer.clear();
             buffer.push_str(&vocab[tokens[i]].0);
             buffer.push_str(&vocab[tokens[i + 1]].0);
@@ -615,7 +616,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("Model: {:?}", config);
 
     let weights = TransformerWeights::from_buf_reader(&mut rdr, &config);
-    let (vocab, max_token_length) = read_tokenizer((config.vocab_size as usize));
+    let (vocab, max_token_length) = read_tokenizer(config.vocab_size as usize);
 
     // proccess user input
     let prompt = match args.get(4) {
