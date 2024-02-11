@@ -1,6 +1,10 @@
 use ndarray::parallel::prelude::IntoParallelRefMutIterator;
 use ndarray::prelude::*;
 use ndarray::RemoveAxis;
+use std::error::Error;
+use std::io::stdout;
+use std::io::Write;
+use std::time::SystemTime;
 use std::{env, f32};
 // use std::{env, f32};
 // use std::error::Error;
@@ -584,4 +588,96 @@ fn bpe_encode(text: &[u8], vocab: &Vec<(String, Score)>, max_token_length: usize
     tokens
 }
 
-fn main() {}
+fn main() -> Result<(), Box<dyn Error>> {
+    //pasrse arguments
+    let args: Vec<String> = env::args().collect();
+
+    if args.len() < 2 {
+        println!(
+            "Usage:{} <checkpoint_file> [temperature] [steps] [prompt]",
+            &args[0]
+        );
+        return Ok(());
+    }
+    //finds checkpoint file
+    let ckpt_file = &args[2];
+    let temperature: f32 = args.get(2).map_or(0.9, |x| x.parse().unwrap());
+    let steps: usize = args.get(3).map_or(256, |x| x.parse().unwrap());
+
+    let rng_seed = (42, 54);
+    let mut rng = PCG::new(rng_seed.0, rng_seed.1);
+    println!("Model File: {ckpt_file}, Temperature: {temperature}, Steps: {steps}");
+
+    let mut rdr = BufReader::new(File::open(&ckpt_file)?);
+
+    let config = Config::from_buf_reader(&mut rdr);
+
+    println!("Model: {:?}", config);
+
+    let weights = TransformerWeights::from_buf_reader(&mut rdr, &config);
+    let (vocab, max_token_length) = read_tokenizer((config.vocab_size as usize));
+
+    // proccess user input
+    let prompt = match args.get(4) {
+        Some(p) => String::from(p.trim()),
+        None => String::new(),
+    };
+
+    let prompt_tokens = match prompt.len() {
+        0 => Vec::new(),
+        _ => bpe_encode(prompt.as_bytes(), &vocab, max_token_length as usize),
+    };
+
+    // final text generation loop
+
+    let mut state = RunState::new(&config);
+    let start = SystemTime::now();
+    let mut next;
+    let mut token = 1; // token 1 is <s> (bos) in the vocab
+    let mut pos: usize = 0;
+    println!("<s>");
+
+    while pos < steps {
+        transformer(&config, &weights, &mut state, token, pos);
+
+        if pos < prompt_tokens.len() {
+            next = prompt_tokens[pos];
+        } else {
+            if temperature == 0.0 {
+                // greedy decoding? choose argmax?
+                next = state
+                    .logits
+                    .iter()
+                    .enumerate()
+                    .reduce(|(i1, v1), (i2, v2)| if v1 > v2 { (i1, v1) } else { (i2, v2) })
+                    .map(|(i, _)| i)
+                    .unwrap();
+            } else {
+                // temperature scaling
+                if temperature < 1.0 {
+                    state.logits.iter_mut().for_each(|z| *z /= temperature);
+                }
+                // compute probabilities
+                softmax(&mut state.logits);
+                next = sample(&state.logits, &mut rng);
+            }
+        }
+
+        print!("{}", vocab[next].0);
+        stdout().flush()?;
+
+        token = next as i32;
+        pos += 1;
+    }
+    let elapsed = start.elapsed().unwrap();
+    println!();
+    println!("--------------------------------");
+    println!(
+        "elapsed: {}.{:03} s, avg tok/s: {}",
+        elapsed.as_secs(),
+        elapsed.subsec_millis(),
+        (steps - 1) as f32 / elapsed.as_secs_f32()
+    );
+
+    Ok(())
+}
