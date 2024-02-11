@@ -553,36 +553,35 @@ fn bpe_encode(text: &[u8], vocab: &Vec<(String, Score)>, max_token_length: usize
             .find(|x| (*(*x).1).0 == char)
             .expect("illegal character");
         tokens.push(id);
+    }
+    let mut buffer = String::with_capacity(max_token_length);
 
-        let mut buffer = String::with_capacity(max_token_length);
+    loop {
+        // structured as (score, (vocab index, tokens index))
+        let mut best = (-1e10_f32, (usize::MAX, usize::MAX));
 
-        loop {
-            // structured as (score, (vocab index, tokens index))
-            let mut best = (-1e10_f32, (usize::MAX, usize::MAX));
-
-            for i in 0..=tokens.len() {
-                buffer.clear();
-                buffer.push_str(&vocab[tokens[i]].0);
-                buffer.push_str(&vocab[tokens[i + 1]].0);
-                //vid means vocab index
-                if let Some((vid, (_, score))) =
-                    vocab.iter().enumerate().find(|x| (*(*x).1).0 == buffer)
-                {
-                    if *score > best.0 {
-                        //i is token index
-                        best = (*score, *vid, i)
-                    }
+        for i in 0..=tokens.len() {
+            buffer.clear();
+            buffer.push_str(&vocab[tokens[i]].0);
+            buffer.push_str(&vocab[tokens[i + 1]].0);
+            //vid means vocab index
+            if let Some((vid, (_, score))) =
+                vocab.iter().enumerate().find(|x| (*(*x).1).0 == buffer)
+            {
+                if *score > best.0 {
+                    //i is token index
+                    best = (*score, (vid, i));
                 }
             }
-            if best.1 .0 == usize::MAX {
-                break; // this is for safety i think
-            }
-            //merging
-            tokens[best.1 .1] = best.1 .0;
-            tokens.remove(best.1 .1 + 1);
         }
-        tokens
+        if best.1 .0 == usize::MAX {
+            break; // this is for safety i think
+        }
+        //merging
+        tokens[best.1 .1] = best.1 .0;
+        tokens.remove(best.1 .1 + 1);
     }
+    tokens
 }
 
 fn main() {}
