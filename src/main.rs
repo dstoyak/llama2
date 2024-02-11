@@ -466,6 +466,123 @@ fn transformer(p: &Config, w: &TransformerWeights, s: &mut RunState, token: i32,
         Some(wcls) => wcls,
         None => &w.token_embedding_table,
     };
+    matmul(&mut s.logits, &s.x, wcls, dim, p.vocab_size as usize);
+}
+
+//tbh idk why I need to type the Score here like this
+//nvm I get it its just a synonym. makes for eaier readability of code
+type Score = f32;
+
+//tokenizer read
+fn read_tokenizer(vocab_size: usize) -> (Vec<(String, Score)>, u32) {
+    let mut rdr = BufReader::new(File::open("tokenizer.bin").expect("Couldn't load tokenizer.bin"));
+    let max_token_length: u32 = read::<u32>(&mut rdr);
+
+    let mut vocab: Vec<(String, Score)> = Vec::with_capacity(vocab_size);
+    //an undersore indicatates an unused variable in rust. helps with unused variable errors from rust compiler
+    for _ in 0..vocab_size {
+        let score: f32 = read::<f32>(&mut rdr);
+        let len: usize = read::<i32>(&mut rdr) as usize;
+        let mut word: Vec<u8> = vec![0_u8; len];
+        rdr.read_exact(&mut word).unwrap();
+        vocab.push((String::from_utf8(word).unwrap(), score));
+    }
+    (vocab, max_token_length)
+}
+
+//utilities
+
+// random number generator. Permuted congruential generator
+
+pub struct PCG {
+    state: u64,
+    inc: u64,
+}
+
+impl PCG {
+    fn randint(&mut self) -> u32 {
+        let old_state: u64 = self.state;
+        self.state = old_state
+            .wrapping_mul(6364136223846793005u64)
+            .wrapping_add(self.inc);
+        let xor_shifted = (((old_state >> 18u32) ^ old_state) >> 27u32) as u32;
+        let rot = (old_state >> 59u32) as u32;
+        (xor_shifted >> rot) | (xor_shifted << (((!rot).wrapping_add(1)) & 31))
+    }
+
+    // decent,but not great, way of generating random float
+    pub fn rand(&mut self) -> f32 {
+        let r_int = self.randint();
+        (r_int as f32) * (2.0_f32.powi(-32))
+    }
+
+    pub fn new(init_state: u64, init_seq: u64) -> Self {
+        let mut rng = PCG {
+            state: 0,
+            inc: (init_seq << 1u32) | 1u64,
+        };
+        _ = rng.randint();
+        rng.state += init_state;
+        _ = rng.randint();
+        rng
+    }
+}
+
+// given a vec of probabilities and a random float, this cycles through the probabilities until the cummilative preceeding probabilities are greater than the rand number. at which point it returns the index of the last probability that made the cdf greater than the rand float. if the whole list of probabilities does not result in a number greater than the rand float then the last index is returned.
+fn sample(probabilities: &Vec<f32>, rng: &mut PCG) -> usize {
+    let r: f32 = rng.rand();
+    let mut cdf: f32 = 0.0;
+
+    for (i, &p) in probabilities.iter().enumerate() {
+        cdf += p;
+        if r < cdf {
+            return i;
+        }
+    }
+    probabilities.len() - 1
+}
+
+fn bpe_encode(text: &[u8], vocab: &Vec<(String, Score)>, max_token_length: usize) -> Vec<usize> {
+    let mut tokens: Vec<usize> = Vec::new();
+
+    for i in 0..text.len() {
+        let char: &str = std::str::from_utf8(&text[i..i + 1]).unwrap();
+        let (id, _) = vocab
+            .iter()
+            .enumerate()
+            .find(|x| (*(*x).1).0 == char)
+            .expect("illegal character");
+        tokens.push(id);
+
+        let mut buffer = String::with_capacity(max_token_length);
+
+        loop {
+            // structured as (score, (vocab index, tokens index))
+            let mut best = (-1e10_f32, (usize::MAX, usize::MAX));
+
+            for i in 0..=tokens.len() {
+                buffer.clear();
+                buffer.push_str(&vocab[tokens[i]].0);
+                buffer.push_str(&vocab[tokens[i + 1]].0);
+                //vid means vocab index
+                if let Some((vid, (_, score))) =
+                    vocab.iter().enumerate().find(|x| (*(*x).1).0 == buffer)
+                {
+                    if *score > best.0 {
+                        //i is token index
+                        best = (*score, *vid, i)
+                    }
+                }
+            }
+            if best.1 .0 == usize::MAX {
+                break; // this is for safety i think
+            }
+            //merging
+            tokens[best.1 .1] = best.1 .0;
+            tokens.remove(best.1 .1 + 1);
+        }
+        tokens
+    }
 }
 
 fn main() {}
